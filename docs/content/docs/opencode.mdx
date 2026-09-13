@@ -156,3 +156,24 @@ If unwrap left the provider configured, run `headroom unwrap opencode` again, or
 **Proxy port conflict.**
 
 Use `--port` to select a specific port, or let the proxy auto-select an available one.
+
+## Kilo CLI
+
+The Kilo CLI is an OpenCode fork with the same config schema and plugin API, so `headroom wrap kilo` mirrors `wrap opencode`: it starts or reuses the proxy, writes a `headroom` provider, registers the Headroom MCP tools, and launches `kilo` (falling back to `kilocode`) with the generated config.
+
+```bash
+headroom wrap kilo
+headroom unwrap kilo
+```
+
+Differences from OpenCode:
+
+| | OpenCode | Kilo |
+|---|---|---|
+| Config file | `~/.config/opencode/opencode.json` | `~/.config/kilo/kilo.json` (or `$KILO_CONFIG`) |
+| Runtime env | `OPENCODE_CONFIG_CONTENT` | `KILO_CONFIG_CONTENT` |
+| Backup | `opencode.json.headroom-backup` | `kilo.json.headroom-backup` |
+
+Kilo's transport plugin reuses the same `headroom-opencode` bundle. `unwrap kilo` only restores or cleans Kilo's own config and never touches OpenCode files.
+
+This first version covers the **Kilo CLI only**. Kilo for VS Code, JetBrains, and Kilo Cloud do not pass through the CLI wrap path — point them at a running `headroom proxy` directly, or wait for a dedicated integration.

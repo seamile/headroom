@@ -5,6 +5,10 @@ OpenCode integration helpers for Headroom. The package supports two integration 
 1. Provider config helpers used by `headroom wrap opencode` and persistent installs.
 2. A native OpenCode plugin that installs Headroom transport interception and exposes the retrieve tool.
 
+The Kilo CLI is an OpenCode fork with a compatible plugin API and config schema,
+so `headroom wrap kilo` reuses this same provider config and plugin bundle
+against Kilo's own config directory (`~/.config/kilo/kilo.json`, or `$KILO_CONFIG`).
+
 ## Install
 
 ```bash

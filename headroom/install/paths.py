@@ -145,3 +145,42 @@ def zcode_config_dir() -> Path:
     """Return the ZCode user configuration directory."""
 
     return Path.home() / ".zcode"
+
+
+# Kilo reads these global config files in order (later wins); it still accepts
+# the legacy ``opencode.json``/``opencode.jsonc``/``config.json`` names from its
+# own directory. Write to whichever name the user already has so a shadow file
+# can never be silently overridden.
+_KILO_CONFIG_NAMES: tuple[str, ...] = (
+    "kilo.json",
+    "kilo.jsonc",
+    "opencode.json",
+    "opencode.jsonc",
+    "config.json",
+)
+
+
+def kilo_home_dir() -> Path:
+    """Return the Kilo home/config directory."""
+
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base_dir = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base_dir / "kilo"
+
+
+def kilo_config_path() -> Path:
+    """Return the active Kilo config file path.
+
+    Resolution order: the ``KILO_CONFIG`` env override, then the first existing
+    global config file, then the canonical ``~/.config/kilo/kilo.json``.
+    """
+
+    env_path = os.environ.get("KILO_CONFIG", "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    home_dir = kilo_home_dir()
+    for name in _KILO_CONFIG_NAMES:
+        candidate = home_dir / name
+        if candidate.exists():
+            return candidate
+    return home_dir / "kilo.json"

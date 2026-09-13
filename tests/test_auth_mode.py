@@ -202,3 +202,44 @@ def test_classify_client_uses_default_when_no_client_signal():
     headers = {"user-agent": "anthropic/0.42.0"}
 
     assert classify_client(headers, default="claude") == "claude"
+
+
+# ── Kilo (OpenCode fork) ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "ua",
+    [
+        "kilo/latest/7.6.2/cli",  # provider fetch UA (anthropic)
+        "Kilo-Code/7.6.2",  # provider override UA (non-anthropic)
+        "kilocode/7.6.2",  # OAuth/form helper UA
+    ],
+)
+def test_kilo_ua_classified_subscription_and_client(ua: str) -> None:
+    headers = {"user-agent": ua}
+    assert classify_auth_mode(headers) is AuthMode.SUBSCRIPTION
+    assert classify_client(headers) == "kilo"
+
+
+def test_kilo_ua_embedded_in_wrapper_is_matched() -> None:
+    """UAs are substring-matched, so a parent prefix must not defeat them."""
+    headers = {"user-agent": "some-wrapper/1.0 kilo/latest/7.6.2/cli"}
+    assert classify_auth_mode(headers) is AuthMode.SUBSCRIPTION
+    assert classify_client(headers) == "kilo"
+
+
+def test_kilo_ua_case_insensitive() -> None:
+    headers = {"user-agent": "KILO/LATEST/7.6.2/CLI"}
+    assert classify_auth_mode(headers) is AuthMode.SUBSCRIPTION
+    assert classify_client(headers) == "kilo"
+
+
+def test_explicit_x_client_overrides_kilo_ua() -> None:
+    headers = {"user-agent": "kilo/latest/7.6.2/cli", "x-client": "custom-client"}
+    assert classify_client(headers) == "custom-client"
+
+
+def test_exported_prefixes_needles_match_documented_kilo_uas() -> None:
+    """Guard the exact needles issue #975 asked for."""
+    for needle in ("kilo/", "kilocode/", "kilo-code/"):
+        assert needle in SUBSCRIPTION_UA_PREFIXES

@@ -24,6 +24,9 @@ SUBSCRIPTION_UA_PREFIXES: tuple[str, ...] = (
     "github-copilot/",
     "anthropic-cli/",
     "antigravity/",
+    "kilo/",
+    "kilocode/",
+    "kilo-code/",
 )
 
 
@@ -39,6 +42,9 @@ CLIENT_UA_MAP: tuple[tuple[str, str], ...] = (
     ("aider/", "aider"),
     ("droid/", "droid"),
     ("opencode/", "opencode"),
+    ("kilo/", "kilo"),
+    ("kilocode/", "kilo"),
+    ("kilo-code/", "kilo"),
     ("github-copilot/", "copilot"),
     ("antigravity/", "antigravity"),
     ("strands-agents/", "strands"),

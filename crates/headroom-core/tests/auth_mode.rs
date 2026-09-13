@@ -149,6 +149,34 @@ fn antigravity_ua_classified_subscription() {
     assert_eq!(classify(&h), AuthMode::Subscription);
 }
 
+#[test]
+fn kilo_ua_classified_subscription() {
+    // Kilo is an OpenCode fork. Its provider UA is
+    // `kilo/<channel>/<version>/<client>` for Anthropic and
+    // `Kilo-Code/<version>` elsewhere; both must classify as subscription.
+    for ua in ["kilo/latest/7.6.2/cli", "Kilo-Code/7.6.2", "kilocode/7.6.2"] {
+        let h = headers(&[("user-agent", ua)]);
+        assert_eq!(classify(&h), AuthMode::Subscription, "ua={ua}");
+    }
+}
+
+#[test]
+fn kilo_ua_embedded_and_case_insensitive() {
+    let embedded = headers(&[("user-agent", "some-wrapper/1.0 kilo/latest/7.6.2/cli")]);
+    assert_eq!(classify(&embedded), AuthMode::Subscription);
+
+    let upper = headers(&[("user-agent", "KILO/LATEST/7.6.2/CLI")]);
+    assert_eq!(classify(&upper), AuthMode::Subscription);
+}
+
+#[test]
+fn opencode_ua_stays_payg() {
+    // Kilo still emits `opencode/<version>` for its openai provider; that
+    // must not be reclassified as a Kilo subscription.
+    let h = headers(&[("user-agent", "opencode/1.0.0")]);
+    assert_eq!(classify(&h), AuthMode::Payg);
+}
+
 // ── Performance ──────────────────────────────────────────────────
 
 /// Smoke perf check — a strict bench lives at

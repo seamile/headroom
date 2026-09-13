@@ -147,6 +147,14 @@ from headroom.providers.grok_build.config import (
     inject_grok_provider_config,
     restore_grok_provider_config,
 )
+from headroom.providers.kilo import build_kilo_launch_env as _build_kilo_launch_env
+from headroom.providers.kilo.config import (
+    inject_kilo_provider_config,
+    kilo_config_has_headroom,
+    kilo_config_paths,
+    snapshot_kilo_config_if_unwrapped,
+    strip_kilo_headroom_config,
+)
 from headroom.providers.kimi import build_launch_env as _build_kimi_launch_env
 from headroom.providers.mistral_vibe import build_launch_env as _build_mistral_vibe_launch_env
 from headroom.providers.omp import build_launch_env as _build_omp_launch_env
@@ -296,7 +304,15 @@ def _append_text(path: Path, content: str) -> None:
     fsutil.append_text(path, content)
 
 
-_AGENT_SAVINGS_TARGET_AGENTS = {"claude", "codex", "cursor", "grok", "grok_build", "opencode"}
+_AGENT_SAVINGS_TARGET_AGENTS = {
+    "claude",
+    "codex",
+    "cursor",
+    "grok",
+    "grok_build",
+    "kilo",
+    "opencode",
+}
 _WRAP_PROXY_TIMEOUT_ENV = "HEADROOM_WRAP_PROXY_TIMEOUT"
 _WRAP_PROXY_TIMEOUT_DEFAULT_SECONDS = 45
 _WRAP_PROXY_TIMEOUT_ML_DEFAULT_SECONDS = 90
@@ -5003,6 +5019,7 @@ def wrap(ctx: click.Context) -> None:
         headroom wrap openhands           # OpenHands CLI
         headroom wrap openclaw            # OpenClaw plugin bootstrap
         headroom wrap opencode            # OpenCode CLI
+        headroom wrap kilo                # Kilo CLI
         headroom wrap omp                 # Oh My Pi CLI
         headroom wrap zcode               # ZCode desktop app setup
 
@@ -7702,6 +7719,187 @@ def openclaw(
 
 
 # =============================================================================
+# Shared OpenCode-family routed-agent launch (OpenCode, Kilo)
+# =============================================================================
+
+
+def _wrap_subscription_resolution(
+    copilot_subscription: bool,
+    backend: str | None,
+    no_proxy: bool,
+    prepare_only: bool,
+) -> Any | None:
+    """Validate ``--copilot-subscription`` and resolve the subscription token.
+
+    Shared by ``wrap opencode`` and ``wrap kilo`` so both enforce identical
+    constraints. Returns ``None`` when the flag is not set.
+    """
+    if not copilot_subscription:
+        return None
+    effective_backend = backend or os.environ.get("HEADROOM_BACKEND")
+    if effective_backend not in (None, "", "anthropic"):
+        raise click.ClickException(
+            "--copilot-subscription cannot be combined with translated backends "
+            "such as anyllm or litellm-*; use the anthropic backend."
+        )
+    if no_proxy:
+        raise click.ClickException(
+            "--copilot-subscription cannot be combined with --no-proxy because "
+            "it requires a private seeded proxy."
+        )
+    if prepare_only:
+        raise click.ClickException(
+            "--copilot-subscription cannot be combined with --prepare-only because "
+            "it requires a running private seeded proxy."
+        )
+    return _require_copilot_subscription_resolution()
+
+
+def _wrap_routed_agent(
+    *,
+    agent_type: str,
+    display_name: str,
+    tool_label: str,
+    binary: str | None,
+    args: tuple,
+    port: int,
+    no_mcp: bool,
+    no_serena: bool,
+    code_graph: bool,
+    no_proxy: bool,
+    learn: bool,
+    memory: bool,
+    backend: str | None,
+    anyllm_provider: str | None,
+    region: str | None,
+    verbose: bool,
+    prepare_only: bool,
+    subscription_resolution: Any | None,
+    registrar_factory: Callable[[], Any],
+    config_file: Path,
+    backup_file: Path,
+    snapshot_config: Callable[[Path, Path], None],
+    build_env: Callable[..., tuple[dict[str, str], list[str]]],
+    inject_config: Callable[[int], None],
+) -> None:
+    """Wrap-time setup + launch shared by OpenCode-family CLIs.
+
+    Snapshots the config, registers MCP/Serena/memory, starts or reuses the
+    proxy, injects the Headroom provider, and launches the wrapped binary. The
+    caller resolves the binary and supplies the registrar/config/env factories,
+    so OpenCode and Kilo keep independent paths, labels, and telemetry.
+    """
+    snapshot_config(config_file, backup_file)
+
+    # Register the headroom MCP server so the agent can call headroom_retrieve
+    # on compression markers from the proxy.
+    if not no_mcp:
+        _setup_headroom_mcp(registrar_factory(), port, verbose=verbose, force=True)
+    elif verbose:
+        click.echo("  Skipping MCP retrieve tool (--no-mcp)")
+
+    if not no_serena:
+        # Serena ships no "opencode"/"kilo" context (only agent/codex/claude-code/ide/…);
+        # passing --context <tool> crashes Serena on launch (#1549/#1572). Use
+        # the generic "agent" context, which both CLIs are.
+        _setup_serena_mcp(registrar_factory(), context="agent", verbose=verbose, force=True)
+    else:
+        _disable_serena_mcp(registrar_factory(), verbose=verbose)
+
+    if memory:
+        click.echo(f"  Setting up memory for {display_name}...")
+        mem_dir = Path.cwd() / ".headroom"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        mem_user = os.environ.get("USER", os.environ.get("USERNAME", "default"))
+        _inject_memory_mcp_config(mem_user)
+        agents_md = Path.cwd() / "AGENTS.md"
+        _inject_memory_agents_md(agents_md)
+
+    if prepare_only:
+        inject_config(port)
+        return
+
+    assert binary is not None
+
+    # Register our proxy client marker BEFORE _ensure_proxy so that another
+    # wrapper's cleanup sees us as an active client and doesn't terminate a
+    # shared proxy during the startup gap.
+    _register_proxy_client(port)
+
+    # Resolve port before config injection so the provider block and MCP
+    # URL both point at the port the proxy will actually be on.
+    proxy, actual_port = _ensure_proxy(
+        port,
+        no_proxy,
+        learn=learn,
+        memory=memory,
+        agent_type=agent_type,
+        code_graph=code_graph,
+        backend=backend,
+        anyllm_provider=anyllm_provider,
+        region=region,
+        openai_api_url=(subscription_resolution.api_url if subscription_resolution else None),
+        copilot_api_token=(subscription_resolution.token if subscription_resolution else None),
+        copilot_refresh_oauth_token=(
+            subscription_resolution.refresh_oauth_token if subscription_resolution else None
+        ),
+        copilot_api_token_expires_at=(
+            subscription_resolution.api_token_expires_at if subscription_resolution else None
+        ),
+    )
+
+    try:
+        # If the proxy fell back to a different port, move our marker so
+        # cleanup tracking stays accurate and update MCP config.
+        if actual_port != port:
+            _unregister_proxy_client(port)
+            _register_proxy_client(actual_port)
+            if not no_mcp:
+                _setup_headroom_mcp(registrar_factory(), actual_port, verbose=verbose, force=True)
+
+        launch_environ = os.environ.copy()
+        if subscription_resolution is not None:
+            _scrub_copilot_subscription_launch_env(launch_environ)
+        env, env_vars_display = build_env(
+            actual_port, launch_environ, project=_project_name_from_cwd(), include_mcp=not no_mcp
+        )
+
+        inject_config(actual_port)
+        if memory:
+            _inject_memory_mcp_config(
+                os.environ.get("USER", os.environ.get("USERNAME", "default")),
+            )
+
+        # Proxy already started by _ensure_proxy above; tell _launch_tool to
+        # skip duplicate startup.
+        _launch_tool(
+            binary=binary,
+            args=args,
+            env=env,
+            port=actual_port,
+            no_proxy=True,
+            tool_label=tool_label,
+            env_vars_display=env_vars_display,
+            learn=learn,
+            memory=memory,
+            agent_type=agent_type,
+            code_graph=code_graph,
+            backend=backend,
+            anyllm_provider=anyllm_provider,
+            region=region,
+        )
+    finally:
+        if proxy and proxy.poll() is None:
+            _other = _live_proxy_clients(actual_port, exclude_self=True)
+            if not _other:
+                proxy.terminate()
+                try:
+                    proxy.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proxy.kill()
+
+
+# =============================================================================
 # OpenCode
 # =============================================================================
 
@@ -7768,25 +7966,9 @@ def opencode(
         headroom wrap opencode --backend anyllm --anyllm-provider groq
         headroom wrap opencode --copilot-subscription # Use a GitHub Copilot subscription
     """
-    subscription_resolution = None
-    if copilot_subscription:
-        effective_backend = backend or os.environ.get("HEADROOM_BACKEND")
-        if effective_backend not in (None, "", "anthropic"):
-            raise click.ClickException(
-                "--copilot-subscription cannot be combined with translated backends "
-                "such as anyllm or litellm-*; use the anthropic backend."
-            )
-        if no_proxy:
-            raise click.ClickException(
-                "--copilot-subscription cannot be combined with --no-proxy because "
-                "it requires a private seeded proxy."
-            )
-        if prepare_only:
-            raise click.ClickException(
-                "--copilot-subscription cannot be combined with --prepare-only because "
-                "it requires a running private seeded proxy."
-            )
-        subscription_resolution = _require_copilot_subscription_resolution()
+    subscription_resolution = _wrap_subscription_resolution(
+        copilot_subscription, backend, no_proxy, prepare_only
+    )
 
     # Verify the opencode binary exists BEFORE mutating any config. Otherwise a
     # missing binary leaves headroom MCP/Serena/memory entries in the user's
@@ -7802,130 +7984,146 @@ def opencode(
             click.echo("Install OpenCode: https://opencode.ai")
             raise SystemExit(1)
 
-    # Snapshot OpenCode config.json BEFORE any wrap-time mutation so
-    # `headroom unwrap opencode` can restore the user's pre-wrap state.
-    _opencode_config_file, _opencode_backup_file = opencode_config_paths()
-    snapshot_opencode_config_if_unwrapped(_opencode_config_file, _opencode_backup_file)
+    config_file, backup_file = opencode_config_paths()
 
-    # Register headroom MCP server in OpenCode config so OpenCode can
-    # call headroom_retrieve on compression markers from the proxy.
-    if not no_mcp:
-        from headroom.mcp_registry import OpencodeRegistrar
+    from headroom.mcp_registry import OpencodeRegistrar
 
-        _setup_headroom_mcp(OpencodeRegistrar(), port, verbose=verbose, force=True)
-    elif verbose:
-        click.echo("  Skipping MCP retrieve tool (--no-mcp)")
-
-    if not no_serena:
-        from headroom.mcp_registry import OpencodeRegistrar
-
-        # Serena ships no "opencode" context (only agent/codex/claude-code/ide/…);
-        # passing --context opencode crashes Serena on launch (#1549/#1572). Use
-        # the generic "agent" context, which OpenCode is.
-        _setup_serena_mcp(OpencodeRegistrar(), context="agent", verbose=verbose, force=True)
-    else:
-        from headroom.mcp_registry import OpencodeRegistrar
-
-        _disable_serena_mcp(OpencodeRegistrar(), verbose=verbose)
-
-    # Setup memory MCP server for OpenCode (native tool integration)
-    if memory:
-        click.echo("  Setting up memory for OpenCode...")
-        mem_dir = Path.cwd() / ".headroom"
-        mem_dir.mkdir(parents=True, exist_ok=True)
-        mem_user = os.environ.get("USER", os.environ.get("USERNAME", "default"))
-        _inject_memory_mcp_config(mem_user)
-        agents_md = Path.cwd() / "AGENTS.md"
-        _inject_memory_agents_md(agents_md)
-
-    if prepare_only:
-        inject_opencode_provider_config(port)
-        return
-
-    # Past the prepare-only return the launch path always ran the binary check
-    # above, so opencode_bin is resolved.
-    assert opencode_bin is not None
-
-    # Register our proxy client marker BEFORE _ensure_proxy so that another
-    # wrapper's cleanup sees us as an active client and doesn't terminate a
-    # shared proxy during the startup gap.
-    _register_proxy_client(port)
-
-    # Resolve port before config injection so the provider block and MCP
-    # URL both point at the port the proxy will actually be on.
-    _opencode_proxy, actual_port = _ensure_proxy(
-        port,
-        no_proxy,
+    _wrap_routed_agent(
+        agent_type="opencode",
+        display_name="OpenCode",
+        tool_label="OPENCODE",
+        binary=opencode_bin,
+        args=opencode_args,
+        port=port,
+        no_mcp=no_mcp,
+        no_serena=no_serena,
+        code_graph=code_graph,
+        no_proxy=no_proxy,
         learn=learn,
         memory=memory,
-        agent_type="opencode",
-        code_graph=code_graph,
         backend=backend,
         anyllm_provider=anyllm_provider,
         region=region,
-        openai_api_url=(subscription_resolution.api_url if subscription_resolution else None),
-        copilot_api_token=(subscription_resolution.token if subscription_resolution else None),
-        copilot_refresh_oauth_token=(
-            subscription_resolution.refresh_oauth_token if subscription_resolution else None
-        ),
-        copilot_api_token_expires_at=(
-            subscription_resolution.api_token_expires_at if subscription_resolution else None
-        ),
+        verbose=verbose,
+        prepare_only=prepare_only,
+        subscription_resolution=subscription_resolution,
+        registrar_factory=OpencodeRegistrar,
+        config_file=config_file,
+        backup_file=backup_file,
+        snapshot_config=snapshot_opencode_config_if_unwrapped,
+        build_env=_build_opencode_launch_env,
+        inject_config=inject_opencode_provider_config,
     )
 
-    try:
-        # If the proxy fell back to a different port, move our marker so
-        # cleanup tracking stays accurate and update MCP config.
-        if actual_port != port:
-            _unregister_proxy_client(port)
-            _register_proxy_client(actual_port)
-            if not no_mcp:
-                from headroom.mcp_registry import OpencodeRegistrar
 
-                _setup_headroom_mcp(OpencodeRegistrar(), actual_port, verbose=verbose, force=True)
+@wrap.command(context_settings={"ignore_unknown_options": True})
+@_retired_context_tool_option
+@_serena_instructions_option
+@click.option(
+    "--port", "-p", default=8787, type=click.IntRange(1, 65535), help="Proxy port (default: 8787)"
+)
+@click.option("--no-mcp", is_flag=True, help="Skip headroom MCP server registration")
+@click.option("--no-serena", is_flag=True, help="Skip Serena MCP server registration")
+@click.option(
+    "--code-graph",
+    is_flag=True,
+    help="Enable code graph indexing via codebase-memory-mcp (optional)",
+)
+@click.option("--no-proxy", is_flag=True, help="Skip proxy startup (use existing proxy)")
+@click.option(
+    "--copilot-subscription",
+    is_flag=True,
+    help="Route headroom/* models through the authenticated GitHub Copilot subscription",
+)
+@click.option("--learn", is_flag=True, help="Enable live traffic learning")
+@click.option("--memory", is_flag=True, help="Enable persistent cross-session memory")
+@click.option(
+    "--backend", default=None, help="API backend: 'anthropic', 'anyllm', 'litellm-vertex', etc."
+)
+@click.option("--anyllm-provider", default=None, help="Provider for any-llm backend")
+@click.option("--region", default=None, help="Cloud region for Bedrock/Vertex")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--prepare-only", is_flag=True, hidden=True)
+@click.argument("kilo_args", nargs=-1, type=click.UNPROCESSED)
+def kilo(
+    port: int,
+    no_mcp: bool,
+    no_serena: bool,
+    code_graph: bool,
+    no_proxy: bool,
+    copilot_subscription: bool,
+    learn: bool,
+    memory: bool,
+    backend: str | None,
+    anyllm_provider: str | None,
+    region: str | None,
+    verbose: bool,
+    prepare_only: bool,
+    kilo_args: tuple,
+) -> None:
+    """Launch Kilo CLI through Headroom proxy.
 
-        launch_environ = os.environ.copy()
-        if subscription_resolution is not None:
-            _scrub_copilot_subscription_launch_env(launch_environ)
-        env, env_vars_display = _build_opencode_launch_env(
-            actual_port, launch_environ, project=_project_name_from_cwd(), include_mcp=not no_mcp
-        )
+    \b
+    Sets KILO_CONFIG_CONTENT to route all Kilo API calls through Headroom.
+    Configures a headroom provider via @ai-sdk/openai-compatible and reuses
+    the OpenCode-compatible transport plugin. Kilo's config and backup
+    namespace are independent from OpenCode's.
 
-        # Inject Headroom provider into OpenCode config so traffic routes through proxy.
-        inject_opencode_provider_config(actual_port)
-        if memory:
-            mem_dir = Path.cwd() / ".headroom"
-            _inject_memory_mcp_config(
-                os.environ.get("USER", os.environ.get("USERNAME", "default")),
-            )
+    \b
+    Examples:
+        headroom wrap kilo                        # Start proxy + kilo
+        headroom wrap kilo -- "fix the bug"       # Pass a prompt to kilo
+        headroom wrap kilo --no-mcp               # Skip MCP retrieve tool registration
+        headroom wrap kilo --no-serena            # Skip Serena MCP registration
+        headroom wrap kilo --port 9999            # Custom proxy port
+        headroom wrap kilo --backend anyllm --anyllm-provider groq
+        headroom wrap kilo --copilot-subscription # Use a GitHub Copilot subscription
+    """
+    subscription_resolution = _wrap_subscription_resolution(
+        copilot_subscription, backend, no_proxy, prepare_only
+    )
 
-        # Proxy already started by _ensure_proxy above; tell _launch_tool to
-        # skip duplicate startup.
-        _launch_tool(
-            binary=opencode_bin,
-            args=opencode_args,
-            env=env,
-            port=actual_port,
-            no_proxy=True,
-            tool_label="OPENCODE",
-            env_vars_display=env_vars_display,
-            learn=learn,
-            memory=memory,
-            agent_type="opencode",
-            code_graph=code_graph,
-            backend=backend,
-            anyllm_provider=anyllm_provider,
-            region=region,
-        )
-    finally:
-        if _opencode_proxy and _opencode_proxy.poll() is None:
-            _other = _live_proxy_clients(actual_port, exclude_self=True)
-            if not _other:
-                _opencode_proxy.terminate()
-                try:
-                    _opencode_proxy.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    _opencode_proxy.kill()
+    # Verify the Kilo binary exists BEFORE mutating any config, same
+    # config-before-verify guard as `wrap opencode` (#1614). Kilo ships both a
+    # `kilo` and a legacy `kilocode` entrypoint; prefer `kilo`.
+    kilo_bin: str | None = None
+    if not prepare_only:
+        kilo_bin = shutil.which("kilo") or shutil.which("kilocode")
+        if not kilo_bin:
+            click.echo("Error: 'kilo' not found in PATH.")
+            click.echo("Install Kilo: https://kilo.ai")
+            raise SystemExit(1)
+
+    config_file, backup_file = kilo_config_paths()
+
+    from headroom.mcp_registry import KiloRegistrar
+
+    _wrap_routed_agent(
+        agent_type="kilo",
+        display_name="Kilo",
+        tool_label="KILO",
+        binary=kilo_bin,
+        args=kilo_args,
+        port=port,
+        no_mcp=no_mcp,
+        no_serena=no_serena,
+        code_graph=code_graph,
+        no_proxy=no_proxy,
+        learn=learn,
+        memory=memory,
+        backend=backend,
+        anyllm_provider=anyllm_provider,
+        region=region,
+        verbose=verbose,
+        prepare_only=prepare_only,
+        subscription_resolution=subscription_resolution,
+        registrar_factory=KiloRegistrar,
+        config_file=config_file,
+        backup_file=backup_file,
+        snapshot_config=snapshot_kilo_config_if_unwrapped,
+        build_env=_build_kilo_launch_env,
+        inject_config=inject_kilo_provider_config,
+    )
 
 
 def _opencode_home_dir() -> Path:
@@ -8014,6 +8212,84 @@ def unwrap_opencode(port: int, no_stop_proxy: bool) -> None:
 
     click.echo()
     click.echo("✓ OpenCode is no longer routed through the Headroom proxy.")
+    if not no_stop_proxy and status != "noop":
+        _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
+    click.echo()
+
+
+@unwrap.command("kilo")
+@click.option(
+    "--port", "-p", default=8787, type=click.IntRange(1, 65535), help="Proxy port (default: 8787)"
+)
+@click.option("--no-stop-proxy", is_flag=True, help="Do not stop the local Headroom proxy")
+def unwrap_kilo(port: int, no_stop_proxy: bool) -> None:
+    """Undo ``headroom wrap kilo`` edits to the active Kilo config file.
+
+    Behaviour:
+
+    * If a pre-wrap backup (``kilo.json.headroom-backup``) exists, the
+      original file is restored byte-for-byte and the backup is removed.
+    * Otherwise, if the config file still contains the Headroom-managed
+      block, that block is stripped out and the rest of the file is
+      preserved.
+    * If the config only ever contained Headroom-written content, the file
+      is removed entirely so Kilo falls back to its defaults.
+    * If neither a backup nor a Headroom block is present, this is a safe
+      no-op.
+
+    Only Kilo's own config/backup namespace is touched; an OpenCode config is
+    never modified.
+    """
+    click.echo()
+    click.echo("  ╔═══════════════════════════════════════════════╗")
+    click.echo("  ║            HEADROOM UNWRAP: KILO              ║")
+    click.echo("  ╚═══════════════════════════════════════════════╝")
+    click.echo()
+
+    config_file, backup_file = kilo_config_paths()
+
+    if backup_file.exists():
+        try:
+            shutil.copy2(backup_file, config_file)
+            backup_file.unlink()
+            click.echo(f"  Restored prior {config_file} from pre-wrap backup.")
+            status = "restored"
+        except OSError as exc:
+            raise click.ClickException(f"could not restore Kilo config from backup: {exc}") from exc
+    elif config_file.exists():
+        content = _read_text(config_file)
+        if kilo_config_has_headroom(content):
+            cleaned = strip_kilo_headroom_config(content)
+            if cleaned.strip():
+                _write_text(config_file, cleaned if cleaned.endswith("\n") else cleaned + "\n")
+                click.echo(f"  Removed Headroom block from {config_file}; other content preserved.")
+                status = "cleaned"
+            else:
+                config_file.unlink()
+                click.echo(f"  Removed {config_file} (contained only Headroom-written config).")
+                status = "removed"
+        else:
+            click.echo(f"  Nothing to undo: {config_file} has no Headroom wrap markers.")
+            status = "noop"
+    else:
+        click.echo(f"  Nothing to undo: {config_file} does not exist.")
+        status = "noop"
+
+    # Remove the headroom MCP server and any Headroom-installed Serena entry.
+    from headroom.mcp_registry import KiloRegistrar
+
+    kilo_registrar = KiloRegistrar()
+    if kilo_registrar.detect():
+        if kilo_registrar.unregister_server("headroom"):
+            click.echo("  Removed Headroom MCP server from Kilo.")
+        serena_status = _remove_headroom_installed_serena_mcp(kilo_registrar)
+        if serena_status == "removed":
+            click.echo("  Removed Headroom-installed Serena MCP server from Kilo.")
+        elif serena_status == "failed":
+            click.echo("  Serena MCP server matched Headroom ledger but could not be removed.")
+
+    click.echo()
+    click.echo("✓ Kilo is no longer routed through the Headroom proxy.")
     if not no_stop_proxy and status != "noop":
         _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
     click.echo()

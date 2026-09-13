@@ -84,6 +84,9 @@ const SUBSCRIPTION_UA_PREFIXES: &[&str] = &[
     "github-copilot/",
     "anthropic-cli/",
     "antigravity/",
+    "kilo/",
+    "kilocode/",
+    "kilo-code/",
 ];
 
 /// Classify the auth mode of an inbound request from its headers.
