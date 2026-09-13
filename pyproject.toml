@@ -87,8 +87,10 @@ proxy = [
     # Rust fastembed enables ORT C API 24. ORT <1.24 deadlocks instead of
     # returning an initialization error; 1.24+ no longer ships Python 3.10
     # wheels, so 3.10 keeps Python-only ORT and bypasses native detection.
-    "onnxruntime>=1.24.0; python_version>='3.11'",
-    "onnxruntime>=1.16.0,<1.24.0; python_version<'3.11'",
+    # ORT also dropped Intel macOS (darwin/x86_64) wheels after 1.23, so that
+    # platform keeps Python-only ORT too.
+    "onnxruntime>=1.24.0; python_version>='3.11' and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "onnxruntime>=1.16.0,<1.24.0; python_version<'3.11' or (sys_platform == 'darwin' and platform_machine == 'x86_64')",
     "transformers>=5.5.0,<6.0",   # Tokenizer only (for Kompress)
     "watchdog>=4.0.0",            # File watcher for live code graph reindexing (--code-graph)
     "sqlite-vec>=0.1.6",          # Vector index for memory (--memory). Lightweight, no torch.
