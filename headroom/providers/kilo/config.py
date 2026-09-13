@@ -33,7 +33,7 @@ def kilo_config_paths() -> tuple[Path, Path]:
     """Return ``(config_file, backup_file)`` for Kilo.
 
     The backup name is Kilo-specific (``kilo.json.headroom-backup``), so
-    ``wrap kilo`` can never collide with an OpenCode backup.
+    ``wrap kilocode`` can never collide with an OpenCode backup.
     """
     config_file = kilo_config_path()
     backup_file = config_file.with_name(config_file.name + ".headroom-backup")
@@ -89,7 +89,7 @@ def kilo_config_has_headroom(content: str) -> bool:
 def strip_kilo_headroom_config(content: str, *, remove_mcp: bool = True) -> str:
     """Remove all Headroom-managed content from a Kilo config.
 
-    ``unwrap kilo`` cannot rely on the pre-wrap backup alone: when the user had
+    ``unwrap kilocode`` cannot rely on the pre-wrap backup alone: when the user had
     no config before wrapping there is nothing to restore. Unlike OpenCode's
     marker-comment blocks, our injected provider is a plain JSON key, so this
     strips both the marker blocks and the ``provider.headroom`` / ``mcp.headroom``

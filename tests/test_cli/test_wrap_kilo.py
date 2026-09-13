@@ -1,4 +1,4 @@
-"""Tests for `headroom wrap kilo` and `headroom unwrap kilo`."""
+"""Tests for `headroom wrap kilocode` and `headroom unwrap kilocode`."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from headroom.copilot_auth import CopilotSubscriptionTokenResolution
 from headroom.install.paths import kilo_config_path
 from headroom.mcp_registry import KiloRegistrar
 from headroom.providers.kilo.config import inject_kilo_provider_config
+from headroom.providers.kilo.runtime import build_kilo_launch_env
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +76,7 @@ class _FakeProxy:
 # ---------------------------------------------------------------------------
 
 
-def test_wrap_kilo_prefers_kilo_binary(
+def test_wrap_kilocode_prefers_kilocode_binary(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -89,13 +90,13 @@ def test_wrap_kilo_prefers_kilo_binary(
         patch.object(wrap_mod.shutil, "which", side_effect=fake_which),
         patch.object(wrap_mod, "_launch_tool", side_effect=lambda **kw: captured.update(kw)),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
-    assert captured["binary"] == "/usr/bin/kilo"
+    assert captured["binary"] == "/usr/bin/kilocode"
 
 
-def test_wrap_kilo_falls_back_to_kilocode_binary(
+def test_wrap_kilocode_falls_back_to_kilo_binary(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -103,38 +104,38 @@ def test_wrap_kilo_falls_back_to_kilocode_binary(
     captured: dict[str, object] = {}
 
     def fake_which(name: str) -> str | None:
-        if name == "kilocode":
-            return "/usr/bin/kilocode"
+        if name == "kilo":
+            return "/usr/bin/kilo"
         return "/usr/bin/opencode" if name == "opencode" else None
 
     with (
         patch.object(wrap_mod.shutil, "which", side_effect=fake_which),
         patch.object(wrap_mod, "_launch_tool", side_effect=lambda **kw: captured.update(kw)),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
-    assert captured["binary"] == "/usr/bin/kilocode"
-    assert captured["tool_label"] == "KILO"
+    assert captured["binary"] == "/usr/bin/kilo"
+    assert captured["tool_label"] == "KILOCODE"
     assert captured["agent_type"] == "kilo"
 
 
-def test_wrap_kilo_missing_binary_does_not_mutate_config(
+def test_wrap_kilocode_missing_binary_does_not_mutate_config(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
     with patch.object(wrap_mod.shutil, "which", return_value=None):
-        result = runner.invoke(main, ["wrap", "kilo"])
+        result = runner.invoke(main, ["wrap", "kilocode"])
 
     assert result.exit_code == 1
-    assert "'kilo' not found in PATH" in result.output
+    assert "'kilocode' not found in PATH" in result.output
     assert "https://kilo.ai" in result.output
     assert not _kilo_config_file(tmp_path).exists()
 
 
-def test_wrap_kilo_passes_unknown_args_through(
+def test_wrap_kilocode_passes_unknown_args_through(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -142,10 +143,12 @@ def test_wrap_kilo_passes_unknown_args_through(
     captured: dict[str, object] = {}
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_launch_tool", side_effect=lambda **kw: captured.update(kw)),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena", "--", "run", "hi"])
+        result = runner.invoke(
+            main, ["wrap", "kilocode", "--no-mcp", "--no-serena", "--", "run", "hi"]
+        )
 
     assert result.exit_code == 0, result.output
     assert captured["args"] == ("run", "hi")
@@ -156,7 +159,7 @@ def test_wrap_kilo_passes_unknown_args_through(
 # ---------------------------------------------------------------------------
 
 
-def test_wrap_kilo_routes_env_and_shares_proxy(
+def test_wrap_kilocode_routes_env_and_shares_proxy(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -169,11 +172,11 @@ def test_wrap_kilo_routes_env_and_shares_proxy(
         return None, 9911
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_ensure_proxy", side_effect=fake_ensure_proxy),
         patch.object(wrap_mod, "_launch_tool", side_effect=lambda **kw: captured.update(kw)),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
     assert captured["ensure"]["agent_type"] == "kilo"
@@ -185,10 +188,10 @@ def test_wrap_kilo_routes_env_and_shares_proxy(
     assert content["provider"]["anthropic"]["options"]["baseURL"].endswith(":9911/v1")
     assert content["provider"]["openai"]["options"]["baseURL"].endswith(":9911/v1")
     assert "mcp" not in content
-    assert captured["tool_label"] == "KILO"
+    assert captured["tool_label"] == "KILOCODE"
 
 
-def test_wrap_kilo_terminates_private_proxy_on_exit(
+def test_wrap_kilocode_terminates_private_proxy_on_exit(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -196,18 +199,18 @@ def test_wrap_kilo_terminates_private_proxy_on_exit(
     proxy = _FakeProxy()
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_ensure_proxy", return_value=(proxy, 8787)),
         patch.object(wrap_mod, "_live_proxy_clients", return_value=[]),
         patch.object(wrap_mod, "_launch_tool", return_value=None),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
     assert proxy.terminated
 
 
-def test_wrap_kilo_config_write_failure_still_cleans_proxy(
+def test_wrap_kilocode_config_write_failure_still_cleans_proxy(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -215,7 +218,7 @@ def test_wrap_kilo_config_write_failure_still_cleans_proxy(
     proxy = _FakeProxy()
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_ensure_proxy", return_value=(proxy, 8787)),
         patch.object(wrap_mod, "_live_proxy_clients", return_value=[]),
         patch.object(
@@ -224,23 +227,25 @@ def test_wrap_kilo_config_write_failure_still_cleans_proxy(
             side_effect=wrap_mod.click.ClickException("boom"),
         ),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code != 0
     assert proxy.terminated
 
 
-def test_wrap_kilo_prepare_only_writes_config_without_launch(
+def test_wrap_kilocode_prepare_only_writes_config_without_launch(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
     def fail_launch(**kwargs):  # noqa: ANN003
-        raise AssertionError("prepare-only must not launch Kilo")
+        raise AssertionError("prepare-only must not launch Kilo Code")
 
     with patch.object(wrap_mod, "_launch_tool", side_effect=fail_launch):
-        result = runner.invoke(main, ["wrap", "kilo", "--prepare-only", "--no-mcp", "--no-serena"])
+        result = runner.invoke(
+            main, ["wrap", "kilocode", "--prepare-only", "--no-mcp", "--no-serena"]
+        )
 
     assert result.exit_code == 0, result.output
     data = _read_json(_kilo_config_file(tmp_path))
@@ -252,17 +257,17 @@ def test_wrap_kilo_prepare_only_writes_config_without_launch(
 # ---------------------------------------------------------------------------
 
 
-def test_wrap_kilo_registers_headroom_mcp_by_default(
+def test_wrap_kilocode_registers_headroom_mcp_by_default(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_launch_tool", return_value=None),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-serena"])
 
     assert result.exit_code == 0, result.output
     data = _read_json(_kilo_config_file(tmp_path))
@@ -270,17 +275,17 @@ def test_wrap_kilo_registers_headroom_mcp_by_default(
     assert data["mcp"]["headroom"]["command"][1:] == ["mcp", "serve"]
 
 
-def test_wrap_kilo_no_mcp_skips_registration(
+def test_wrap_kilocode_no_mcp_skips_registration(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_launch_tool", return_value=None),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
     data = _read_json(_kilo_config_file(tmp_path))
@@ -288,7 +293,7 @@ def test_wrap_kilo_no_mcp_skips_registration(
     assert "headroom" in data["provider"]
 
 
-def test_wrap_kilo_no_serena_disables_ledger_owned_serena(
+def test_wrap_kilocode_no_serena_disables_ledger_owned_serena(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -296,7 +301,7 @@ def test_wrap_kilo_no_serena_disables_ledger_owned_serena(
     calls: list[str] = []
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_launch_tool", return_value=None),
         patch.object(
             wrap_mod,
@@ -304,7 +309,7 @@ def test_wrap_kilo_no_serena_disables_ledger_owned_serena(
             side_effect=lambda registrar, **kw: calls.append(registrar.name),
         ),
     ):
-        result = runner.invoke(main, ["wrap", "kilo", "--no-mcp", "--no-serena"])
+        result = runner.invoke(main, ["wrap", "kilocode", "--no-mcp", "--no-serena"])
 
     assert result.exit_code == 0, result.output
     assert calls == ["kilo"]
@@ -315,45 +320,45 @@ def test_wrap_kilo_no_serena_disables_ledger_owned_serena(
 # ---------------------------------------------------------------------------
 
 
-def test_wrap_kilo_copilot_subscription_rejects_translated_backend(
+def test_wrap_kilocode_copilot_subscription_rejects_translated_backend(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
     result = runner.invoke(
-        main, ["wrap", "kilo", "--copilot-subscription", "--backend", "anyllm", "--no-mcp"]
+        main, ["wrap", "kilocode", "--copilot-subscription", "--backend", "anyllm", "--no-mcp"]
     )
 
     assert result.exit_code != 0
     assert "cannot be combined with translated backends" in result.output
 
 
-def test_wrap_kilo_copilot_subscription_rejects_no_proxy(
+def test_wrap_kilocode_copilot_subscription_rejects_no_proxy(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
-    result = runner.invoke(main, ["wrap", "kilo", "--copilot-subscription", "--no-proxy"])
+    result = runner.invoke(main, ["wrap", "kilocode", "--copilot-subscription", "--no-proxy"])
 
     assert result.exit_code != 0
     assert "cannot be combined with --no-proxy" in result.output
 
 
-def test_wrap_kilo_copilot_subscription_rejects_prepare_only(
+def test_wrap_kilocode_copilot_subscription_rejects_prepare_only(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
-    result = runner.invoke(main, ["wrap", "kilo", "--copilot-subscription", "--prepare-only"])
+    result = runner.invoke(main, ["wrap", "kilocode", "--copilot-subscription", "--prepare-only"])
 
     assert result.exit_code != 0
     assert "cannot be combined with --prepare-only" in result.output
 
 
-def test_wrap_kilo_copilot_subscription_scrubs_secrets(
+def test_wrap_kilocode_copilot_subscription_scrubs_secrets(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -372,18 +377,30 @@ def test_wrap_kilo_copilot_subscription_scrubs_secrets(
     )
 
     with (
-        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilo"),
+        patch.object(wrap_mod.shutil, "which", return_value="/usr/bin/kilocode"),
         patch.object(wrap_mod, "_require_copilot_subscription_resolution", return_value=resolution),
         patch.object(wrap_mod, "_launch_tool", side_effect=lambda **kw: captured.update(kw)),
     ):
         result = runner.invoke(
-            main, ["wrap", "kilo", "--copilot-subscription", "--no-mcp", "--no-serena"]
+            main, ["wrap", "kilocode", "--copilot-subscription", "--no-mcp", "--no-serena"]
         )
 
     assert result.exit_code == 0, result.output
     env = captured["env"]
     assert "GITHUB_COPILOT_API_TOKEN" not in env
     assert "copilot-api-secret" not in env["KILO_CONFIG_CONTENT"]
+
+
+# ---------------------------------------------------------------------------
+# Launch display semantics
+# ---------------------------------------------------------------------------
+
+
+def test_kilo_launch_display_labels_opencode_plugin_as_compatible() -> None:
+    env, display = build_kilo_launch_env(8787, environ={})
+
+    assert env["KILO_CONFIG_CONTENT"]
+    assert "plugin=headroom-opencode (Kilo Code-compatible transport)" in display
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +414,7 @@ def _write_wrapped_config(tmp_path: Path) -> Path:
     return config_file
 
 
-def test_unwrap_kilo_restores_backup(
+def test_unwrap_kilocode_restores_backup(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -409,7 +426,7 @@ def test_unwrap_kilo_restores_backup(
     backup_file.write_text('{"model": "user/model"}\n', encoding="utf-8")
     config_file.write_text('{"provider": {"headroom": {}}}\n', encoding="utf-8")
 
-    result = runner.invoke(main, ["unwrap", "kilo", "--no-stop-proxy"])
+    result = runner.invoke(main, ["unwrap", "kilocode", "--no-stop-proxy"])
 
     assert result.exit_code == 0, result.output
     assert _read_json(config_file) == {"model": "user/model"}
@@ -417,7 +434,7 @@ def test_unwrap_kilo_restores_backup(
     assert "Restored prior" in result.output
 
 
-def test_unwrap_kilo_strips_headroom_block_and_preserves_user_content(
+def test_unwrap_kilocode_strips_headroom_block_and_preserves_user_content(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -429,7 +446,7 @@ def test_unwrap_kilo_strips_headroom_block_and_preserves_user_content(
     # No pre-wrap backup: force the strip-and-preserve path.
     config_file.with_name(config_file.name + ".headroom-backup").unlink()
 
-    result = runner.invoke(main, ["unwrap", "kilo", "--no-stop-proxy"])
+    result = runner.invoke(main, ["unwrap", "kilocode", "--no-stop-proxy"])
 
     assert result.exit_code == 0, result.output
     data = _read_json(config_file)
@@ -438,18 +455,30 @@ def test_unwrap_kilo_strips_headroom_block_and_preserves_user_content(
     assert "Removed Headroom block" in result.output
 
 
-def test_unwrap_kilo_is_idempotent_noop(
+def test_unwrap_kilocode_is_idempotent_noop(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _set_test_home(monkeypatch, tmp_path)
 
-    first = runner.invoke(main, ["unwrap", "kilo", "--no-stop-proxy"])
-    second = runner.invoke(main, ["unwrap", "kilo", "--no-stop-proxy"])
+    first = runner.invoke(main, ["unwrap", "kilocode", "--no-stop-proxy"])
+    second = runner.invoke(main, ["unwrap", "kilocode", "--no-stop-proxy"])
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
     assert "Nothing to undo" in second.output
+
+
+def test_wrap_kilo_command_is_gone(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _set_test_home(monkeypatch, tmp_path)
+
+    result = runner.invoke(main, ["wrap", "kilo", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -541,5 +570,5 @@ def test_kilo_registrar_identity_and_detect(
     registrar = KiloRegistrar()
     assert registrar.name == "kilo"
     assert registrar.display_name == "Kilo"
-    with patch("headroom.mcp_registry.kilo.shutil.which", return_value="/usr/bin/kilo"):
+    with patch("headroom.mcp_registry.kilo.shutil.which", return_value="/usr/bin/kilocode"):
         assert registrar.detect() is True

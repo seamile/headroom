@@ -46,7 +46,7 @@ file content is sent anywhere to be compressed.
 
 - **Library** — `compress(messages)` in Python or TypeScript, inline in any app.
 - **Proxy** — `headroom proxy --port 8787`, zero code changes, any language.
-- **Agent wrap** — `headroom wrap claude|codex|grok|copilot|cursor|aider|opencode|kilo|cline|continue|goose|openhands|openclaw|vibe|omp|zcode` in one command; undo with `headroom unwrap <tool>`.
+- **Agent wrap** — `headroom wrap claude|codex|grok|copilot|cursor|aider|opencode|kilocode|cline|continue|goose|openhands|openclaw|vibe|omp|zcode` in one command; undo with `headroom unwrap <tool>`.
 - **MCP server** — `headroom_compress`, `headroom_retrieve`, `headroom_stats` for any MCP client.
 - **Cross-agent memory** — one shared store across Claude, Codex, Gemini and Grok, with automatic dedup.
 - **`headroom learn`** — mines failed sessions and writes corrections to `CLAUDE.local.md` (default, gitignored), `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or `GROK.md`.
@@ -236,7 +236,7 @@ Saved** card then reads `measured` rather than `estimated`, with the band.
 | VS Code Copilot | ✅ | transparent proxy; keeps the selected model |
 | OpenClaw | ✅ | installs as a ContextEngine plugin |
 | OpenCode | ✅ | injects config · starts proxy + launches |
-| Kilo CLI | ✅ | OpenCode-compatible config · starts proxy + launches |
+| Kilo Code CLI | ✅ | OpenCode-compatible config · starts proxy + launches |
 | Cline | ✅ | starts proxy + injects config |
 | Continue | ✅ | starts proxy + injects config |
 | Goose | ✅ | starts proxy + launches |
@@ -249,7 +249,7 @@ Saved** card then reads `measured` rather than `estimated`, with the band.
 
 Any OpenAI-compatible client works through `headroom proxy`. MCP-native clients:
 `headroom mcp install`. Undo durable wrapping with `headroom unwrap <tool>`
-(`claude`, `copilot`, `codex`, `grok`, `kimi`, `omp`, `opencode`, `kilo`, `openclaw`,
+(`claude`, `copilot`, `codex`, `grok`, `kimi`, `omp`, `opencode`, `kilocode`, `openclaw`,
 `zcode`). Registry authors should use the canonical [`server.json`](server.json)
 rather than reconstructing the `headroom mcp serve` contract from prose.
 

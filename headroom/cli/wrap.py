@@ -5019,7 +5019,7 @@ def wrap(ctx: click.Context) -> None:
         headroom wrap openhands           # OpenHands CLI
         headroom wrap openclaw            # OpenClaw plugin bootstrap
         headroom wrap opencode            # OpenCode CLI
-        headroom wrap kilo                # Kilo CLI
+        headroom wrap kilocode            # Kilo Code CLI
         headroom wrap omp                 # Oh My Pi CLI
         headroom wrap zcode               # ZCode desktop app setup
 
@@ -7731,7 +7731,7 @@ def _wrap_subscription_resolution(
 ) -> Any | None:
     """Validate ``--copilot-subscription`` and resolve the subscription token.
 
-    Shared by ``wrap opencode`` and ``wrap kilo`` so both enforce identical
+    Shared by ``wrap opencode`` and ``wrap kilocode`` so both enforce identical
     constraints. Returns ``None`` when the flag is not set.
     """
     if not copilot_subscription:
@@ -8044,8 +8044,8 @@ def opencode(
 @click.option("--region", default=None, help="Cloud region for Bedrock/Vertex")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.option("--prepare-only", is_flag=True, hidden=True)
-@click.argument("kilo_args", nargs=-1, type=click.UNPROCESSED)
-def kilo(
+@click.argument("kilocode_args", nargs=-1, type=click.UNPROCESSED)
+def kilocode(
     port: int,
     no_mcp: bool,
     no_serena: bool,
@@ -8059,9 +8059,9 @@ def kilo(
     region: str | None,
     verbose: bool,
     prepare_only: bool,
-    kilo_args: tuple,
+    kilocode_args: tuple,
 ) -> None:
-    """Launch Kilo CLI through Headroom proxy.
+    """Launch Kilo Code CLI through Headroom proxy.
 
     \b
     Sets KILO_CONFIG_CONTENT to route all Kilo API calls through Headroom.
@@ -8071,13 +8071,13 @@ def kilo(
 
     \b
     Examples:
-        headroom wrap kilo                        # Start proxy + kilo
-        headroom wrap kilo -- "fix the bug"       # Pass a prompt to kilo
-        headroom wrap kilo --no-mcp               # Skip MCP retrieve tool registration
-        headroom wrap kilo --no-serena            # Skip Serena MCP registration
-        headroom wrap kilo --port 9999            # Custom proxy port
-        headroom wrap kilo --backend anyllm --anyllm-provider groq
-        headroom wrap kilo --copilot-subscription # Use a GitHub Copilot subscription
+        headroom wrap kilocode                    # Start proxy + kilocode
+        headroom wrap kilocode -- "fix the bug"   # Pass a prompt to kilocode
+        headroom wrap kilocode --no-mcp           # Skip MCP retrieve tool registration
+        headroom wrap kilocode --no-serena        # Skip Serena MCP registration
+        headroom wrap kilocode --port 9999        # Custom proxy port
+        headroom wrap kilocode --backend anyllm --anyllm-provider groq
+        headroom wrap kilocode --copilot-subscription # Use a GitHub Copilot subscription
     """
     subscription_resolution = _wrap_subscription_resolution(
         copilot_subscription, backend, no_proxy, prepare_only
@@ -8085,13 +8085,13 @@ def kilo(
 
     # Verify the Kilo binary exists BEFORE mutating any config, same
     # config-before-verify guard as `wrap opencode` (#1614). Kilo ships both a
-    # `kilo` and a legacy `kilocode` entrypoint; prefer `kilo`.
-    kilo_bin: str | None = None
+    # `kilocode` and a legacy `kilo` entrypoint; prefer `kilocode`.
+    kilocode_bin: str | None = None
     if not prepare_only:
-        kilo_bin = shutil.which("kilo") or shutil.which("kilocode")
-        if not kilo_bin:
-            click.echo("Error: 'kilo' not found in PATH.")
-            click.echo("Install Kilo: https://kilo.ai")
+        kilocode_bin = shutil.which("kilocode") or shutil.which("kilo")
+        if not kilocode_bin:
+            click.echo("Error: 'kilocode' not found in PATH.")
+            click.echo("Install Kilo Code: https://kilo.ai")
             raise SystemExit(1)
 
     config_file, backup_file = kilo_config_paths()
@@ -8100,10 +8100,10 @@ def kilo(
 
     _wrap_routed_agent(
         agent_type="kilo",
-        display_name="Kilo",
-        tool_label="KILO",
-        binary=kilo_bin,
-        args=kilo_args,
+        display_name="Kilo Code",
+        tool_label="KILOCODE",
+        binary=kilocode_bin,
+        args=kilocode_args,
         port=port,
         no_mcp=no_mcp,
         no_serena=no_serena,
@@ -8217,13 +8217,13 @@ def unwrap_opencode(port: int, no_stop_proxy: bool) -> None:
     click.echo()
 
 
-@unwrap.command("kilo")
+@unwrap.command("kilocode")
 @click.option(
     "--port", "-p", default=8787, type=click.IntRange(1, 65535), help="Proxy port (default: 8787)"
 )
 @click.option("--no-stop-proxy", is_flag=True, help="Do not stop the local Headroom proxy")
-def unwrap_kilo(port: int, no_stop_proxy: bool) -> None:
-    """Undo ``headroom wrap kilo`` edits to the active Kilo config file.
+def unwrap_kilocode(port: int, no_stop_proxy: bool) -> None:
+    """Undo ``headroom wrap kilocode`` edits to the active Kilo Code config file.
 
     Behaviour:
 
@@ -8242,7 +8242,7 @@ def unwrap_kilo(port: int, no_stop_proxy: bool) -> None:
     """
     click.echo()
     click.echo("  ╔═══════════════════════════════════════════════╗")
-    click.echo("  ║            HEADROOM UNWRAP: KILO              ║")
+    click.echo("  ║          HEADROOM UNWRAP: KILOCODE            ║")
     click.echo("  ╚═══════════════════════════════════════════════╝")
     click.echo()
 
@@ -8289,7 +8289,7 @@ def unwrap_kilo(port: int, no_stop_proxy: bool) -> None:
             click.echo("  Serena MCP server matched Headroom ledger but could not be removed.")
 
     click.echo()
-    click.echo("✓ Kilo is no longer routed through the Headroom proxy.")
+    click.echo("✓ Kilo Code is no longer routed through the Headroom proxy.")
     if not no_stop_proxy and status != "noop":
         _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
     click.echo()

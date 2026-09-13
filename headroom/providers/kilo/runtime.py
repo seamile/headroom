@@ -50,7 +50,7 @@ def build_kilo_launch_env(
     display = ["KILO_CONFIG_CONTENT={provider: headroom}"]
     if "plugin" in config_content:
         env["HEADROOM_PROXY_URL"] = f"http://127.0.0.1:{port}"
-        display.append(f"plugin={HEADROOM_OPENCODE_PLUGIN}")
+        display.append(f"plugin={HEADROOM_OPENCODE_PLUGIN} (Kilo Code-compatible transport)")
 
     if project and "HEADROOM_PROJECT" not in env:
         env["HEADROOM_PROJECT"] = project
